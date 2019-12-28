@@ -1,14 +1,22 @@
-require 'parser/current'
-
 require 'ruby2js/serializer'
 
 module Ruby2JS
+  class Error < NotImplementedError
+    def initialize(message, ast)
+      message += ' at ' + ast.loc.expression.source_buffer.name.to_s
+      message += ':' + ast.loc.expression.line.inspect
+      message += ':' + ast.loc.expression.column.to_s
+      super(message)
+    end
+  end
+
   class Converter < Serializer
     attr_accessor :ast
-
+    
     LOGICAL   = :and, :not, :or
-    OPERATORS = [:[], :[]=], [:not, :!], [:*, :/, :%], [:+, :-], [:>>, :<<], 
-      [:&], [:^, :|], [:<=, :<, :>, :>=], [:==, :!=, :===, :"!=="], [:and, :or]
+    OPERATORS = [:[], :[]=], [:not, :!], [:**], [:*, :/, :%], [:+, :-], 
+      [:>>, :<<], [:&], [:^, :|], [:<=, :<, :>, :>=], [:==, :!=, :===, :"!=="],
+      [:and, :or]
     
     INVERT_OP = {
       :<  => :>=,
@@ -20,7 +28,9 @@ module Ruby2JS
       :=== => :'!=='
     }
 
-    GROUP_OPERATORS = [:begin, :dstr, :dsym, :and, :or]
+    GROUP_OPERATORS = [:begin, :dstr, :dsym, :and, :or, :casgn]
+
+    VASGN = [:cvasgn, :ivasgn, :gvasgn, :lvasgn]
 
     attr_accessor :binding, :ivars
 
@@ -29,7 +39,8 @@ module Ruby2JS
 
       @ast, @comments, @vars = ast, comments, vars.dup
       @varstack = []
-      @scope = true
+      @scope = ast
+      @inner = nil
       @rbstack = []
       @next_token = :return
 
@@ -46,6 +57,9 @@ module Ruby2JS
       @prototype = nil
       @class_parent = nil
       @class_name = nil
+
+      @eslevel = :es5
+      @strict = false
     end
 
     def width=(width)
@@ -53,26 +67,87 @@ module Ruby2JS
     end
 
     def convert
-      parse( @ast, :statement )
+      scope @ast 
+
+      if @strict
+        if @sep == '; '
+          @lines.first.unshift "\"use strict\"#@sep"
+        else
+          @lines.unshift Line.new('"use strict";')
+        end
+      end
     end
 
     def operator_index op
       OPERATORS.index( OPERATORS.find{ |el| el.include? op } ) || -1
     end
     
+    # define a new scope; primarily determines what variables are visible and deals with hoisting of
+    # declarations
     def scope( ast, args=nil )
-      scope, @scope = @scope, true
+      scope, @scope = @scope, ast
+      inner, @inner = @inner, nil 
+      mark = output_location
       @varstack.push @vars
       @vars = args if args
       @vars = Hash[@vars.map {|key, value| [key, true]}]
+
       parse( ast, :statement )
+
+      # retroactively add a declaration for 'pending' variables
+      vars = @vars.select {|key, value| value == :pending}.keys
+      unless vars.empty?
+        insert mark, "#{es2015 ? 'let' : 'var'} #{vars.join(', ')}#{@sep}"
+        vars.each {|var| @vars[var] = true}
+      end
     ensure
       @vars = @varstack.pop
       @scope = scope
+      @inner = inner
+    end
+
+    # handle the oddity where javascript considers there to be a scope (e.g. the body of an if statement),
+    # whereas Ruby does not.
+    def jscope( ast, args=nil )
+      @varstack.push @vars
+      @vars = args if args
+      @vars = Hash[@vars.map {|key, value| [key, true]}]
+
+      parse( ast, :statement )
+    ensure
+      pending = @vars.select {|key, value| value == :pending}
+      @vars = @varstack.pop
+      @vars.merge! pending
     end
 
     def s(type, *args)
       Parser::AST::Node.new(type, args)
+    end
+
+    attr_accessor :strict, :eslevel
+
+    def es2015
+      @eslevel >= 2015
+    end
+
+    def es2016
+      @eslevel >= 2016
+    end
+
+    def es2017
+      @eslevel >= 2017
+    end
+
+    def es2018
+      @eslevel >= 2018
+    end
+
+    def es2019
+      @eslevel >= 2019
+    end
+
+    def es2020
+      @eslevel >= 2020
     end
 
     @@handlers = []
@@ -100,7 +175,15 @@ module Ruby2JS
       @comments[ast] -= list
 
       list.map do |comment|
-        comment.text.sub(/^#/, '//') + "\n"
+        if comment.text.start_with? '=begin'
+          if comment.text.include? '*/'
+            comment.text.sub(/\A=begin/, '').sub(/^=end\Z/, '').gsub(/^/, '//')
+          else
+            comment.text.sub(/\A=begin/, '/*').sub(/^=end\Z/, '*/')
+          end
+        else
+          comment.text.sub(/^#/, '//') + "\n"
+        end
       end
     end
 
@@ -112,7 +195,7 @@ module Ruby2JS
       handler = @handlers[ast.type]
 
       unless handler
-        raise NotImplementedError, "unknown AST type #{ ast.type }"
+        raise Error.new("unknown AST type #{ ast.type }", ast)
       end
 
       if state == :statement and not @comments[ast].empty?
@@ -126,18 +209,46 @@ module Ruby2JS
     end
 
     def parse_all(*args)
-      options = (Hash === args.last) ? args.pop : {}
-      sep = options[:join].to_s
-      state = options[:state] || :expression
+      @options = (Hash === args.last) ? args.pop : {}
+      sep = @options[:join].to_s
+      state = @options[:state] || :expression
 
-      args.each_with_index do |arg, index|
+      index = 0
+      args.each do |arg|
         put sep unless index == 0
         parse arg, state
+        index += 1 unless arg == s(:begin)
       end
     end
     
     def group( ast )
-      put '('; parse ast; put ')'
+      if [:dstr, :dsym].include? ast.type and es2015
+        parse ast
+      else
+        put '('; parse ast; put ')'
+      end
+    end
+
+    def timestamp(file)
+      super
+
+      return unless file
+
+      walk = proc do |ast|
+        if ast.loc and ast.loc.expression
+          filename = ast.loc.expression.source_buffer.name
+          if filename and not filename.empty?
+            filename = filename.dup.untaint
+            @timestamps[filename] ||= File.mtime(filename)
+          end
+        end
+
+        ast.children.each do |child|
+          walk[child] if child.is_a? Parser::AST::Node
+        end
+      end
+
+      walk[@ast] if @ast
     end
   end
 end
@@ -163,7 +274,7 @@ module Parser
           selector = loc.name
         end
 
-        return true unless selector.source_buffer
+        return true unless selector and selector.source_buffer
         selector.source_buffer.source[selector.end_pos] == '('
       end
     end
@@ -183,6 +294,7 @@ require 'ruby2js/converter/break'
 require 'ruby2js/converter/case'
 require 'ruby2js/converter/casgn'
 require 'ruby2js/converter/class'
+require 'ruby2js/converter/class2'
 require 'ruby2js/converter/const'
 require 'ruby2js/converter/cvar'
 require 'ruby2js/converter/cvasgn'
@@ -190,6 +302,7 @@ require 'ruby2js/converter/def'
 require 'ruby2js/converter/defs'
 require 'ruby2js/converter/defined'
 require 'ruby2js/converter/dstr'
+require 'ruby2js/converter/fileline'
 require 'ruby2js/converter/for'
 require 'ruby2js/converter/hash'
 require 'ruby2js/converter/if'

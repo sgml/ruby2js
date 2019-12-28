@@ -1,3 +1,5 @@
+#!/usr/bin/env ruby
+#
 # Interactive demo of conversions from Ruby to JS.  Requires wunderbar.
 #
 # Installation
@@ -8,36 +10,78 @@
 #
 #   Want to run a standalone server?
 #     $ ruby ruby2js.rb --port=8080
+#
+#   Want to run from the command line?
+#     $ ruby ruby2js.rb [options] [file]
+#
+#       available options:
+#
+#         --es2015
+#         --es2016
+#         --es2017
+#         --es2018
+#         --es2019
+#         --es2020
+#         --strict
+#         ---filter filter
+#         -f filter
 
 require 'wunderbar'
+
+# extract options from the argument list
+options = {}
+options[:strict] = true if ARGV.delete('--strict')
 
 begin
   # support running directly from a git clone
   $:.unshift File.absolute_path('../../lib', __FILE__)
   require 'ruby2js'
 
-  filters = {
-    'angularrb' => 'ruby2js/filter/angularrb',
-    'angular-resource' => 'ruby2js/filter/angular-resource',
-    'angular-route' => 'ruby2js/filter/angular-route',
-    'functions' => 'ruby2js/filter/functions',
-    'jquery'    => 'ruby2js/filter/jquery',
-    'minitest-jasmine' => 'ruby2js/filter/minitest-jasmine',
-    'return'    => 'ruby2js/filter/return',
-    'require'   => 'ruby2js/filter/require',
-    'react'     => 'ruby2js/filter/react',
-    'rubyjs'    => 'ruby2js/filter/rubyjs',
-    'strict'    => 'ruby2js/filter/strict',
-    'underscore' => 'ruby2js/filter/underscore',
-    'camelCase' => 'ruby2js/filter/camelCase' # should be last
-  }
+  filters = {}
+
+  # autoregister eslevels
+  Dir["#{$:.first}/ruby2js/es20*.rb"].sort.each do |file|
+    eslevel = File.basename(file, '.rb')
+    filters[eslevel] = "ruby2js/#{eslevel}"
+
+    options[:eslevel] = eslevel[/\d+/].to_i if ARGV.delete("--#{eslevel}")
+  end
+
+  # autoregister filters
+  Dir["#{$:.first}/ruby2js/filter/*.rb"].sort.each do |file|
+    filter = File.basename(file, '.rb')
+    filters[filter] = "ruby2js/filter/#{filter}"
+  end
+
+  # put camelCase last as it may interfere with other filters
+  filters['camelCase'] = filters.delete('camelCase')
 
   # allow filters to be selected based on the path
   selected = env['PATH_INFO'].to_s.split('/')
+
+  # add filters from the argument list
+  while %w(-f --filter).include? ARGV[0]
+    ARGV.shift
+    selected << ARGV.shift
+  end
+
+  # require selected filters
   filters.each do |name, filter|
     require filter if selected.include?(name) or selected.include? 'all'
   end
 rescue Exception => $load_error
+end
+
+# command line support
+if not env['REQUEST_METHOD'] and not env['SERVER_PORT']
+  if ARGV.length > 0
+    options[:file] = ARGV.first
+    puts Ruby2JS.convert(File.read(ARGV.first), options).to_s
+  else
+    puts Ruby2JS.convert(STDIN.read, options).to_s
+  end  
+
+  exit
 end
 
 _html do
@@ -53,6 +97,17 @@ _html do
     _textarea @ruby, name: 'ruby', rows: 8, cols: 80
     _input type: 'submit', value: 'Convert'
 
+    _label 'ES level', for: 'eslevel'
+    _select name: 'eslevel', id: 'eslevel' do
+      _option 'default', selected: !@eslevel || @eslevel == 'default'
+      _option 2015, value: 2015, selected: @eslevel == '2015'
+      _option 2016, value: 2016, selected: @eslevel == '2016'
+      _option 2017, value: 2017, selected: @eslevel == '2017'
+      _option 2018, value: 2018, selected: @eslevel == '2018'
+      _option 2019, value: 2019, selected: @eslevel == '2019'
+      _option 2020, value: 2020, selected: @eslevel == '2020'
+    end
+
     _input type: 'checkbox', name: 'ast', id: 'ast', checked: !!@ast
     _label 'Show AST', for: 'ast'
   end
@@ -61,7 +116,9 @@ _html do
     _div_? do
       raise $load_error if $load_error
 
-      ruby = Ruby2JS.convert(@ruby)
+      options[:eslevel] = @eslevel.to_i if @eslevel
+
+      ruby = Ruby2JS.convert(@ruby, options)
 
       if @ast
         walk = proc do |ast, indent=''|

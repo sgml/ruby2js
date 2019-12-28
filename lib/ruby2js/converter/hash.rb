@@ -12,10 +12,26 @@ module Ruby2JS
 
         (singleton ? put('{') : puts('{'))
 
-        pairs.each_with_index do |node, index|
-          raise NotImplementedError, "kwsplat" if node.type == :kwsplat
-
+        index = 0
+        while pairs.length > 0
+          node = pairs.shift
           (singleton ? put(', ') : put(",#@ws")) unless index == 0
+          index += 1
+
+          if node.type == :kwsplat
+            if es2018
+              if node.children.first.type == :hash
+                pairs.unshift(*node.children.first.children)
+                index = 0
+              else
+                puts '...'; parse node.children.first
+              end
+
+              next
+            else
+              raise Error.new("kwsplat", @ast)
+            end
+          end
 
           if not @comments[node].empty?
             (puts ''; singleton = false) if singleton
@@ -56,8 +72,8 @@ module Ruby2JS
               # hoist get/set comments to definition of property
               if right.type == :hash
                 right.children.each do |pair|
-                next unless Parser::AST::Node === pair.children.last
-                  if pair.children.last.type == :block
+                  next unless Parser::AST::Node === pair.children.last
+                  if [:block, :def, :async].include? pair.children.last.type
                     if @comments[pair.children.last]
                       (puts ''; singleton = false) if singleton
                       comments(pair.children.last).each do |comment|
@@ -68,15 +84,45 @@ module Ruby2JS
                 end
               end
 
-              if 
-                left.children.first.to_s =~ /\A[a-zA-Z_$][a-zA-Z_$0-9]*\Z/
-              then
-                put left.children.first
-              else
-                parse left
+              # check to see if es2015 anonymous function syntax can be used
+              anonfn = (es2015 and right and right.type == :block)
+              if anonfn
+                receiver, method = right.children[0].children
+                if receiver
+                  unless method == :new and receiver.children == [nil, :Proc]
+                    anonfn = false
+                  end
+                elsif not [:lambda, :proc].include? method
+                  anonfn = false
+                end
               end
 
-              put ': '; parse right
+              if 
+                anonfn and 
+                left.children.first.to_s =~ /\A[a-zA-Z_$][a-zA-Z_$0-9]*\Z/
+              then
+                @prop = left.children.first
+                parse right, :method
+              elsif
+                es2015 and left.type == :sym and right.type == :lvar and
+                left.children == right.children
+              then
+                parse right 
+              else
+		if not [:str, :sym].include? left.type and es2015
+		  put '['
+		  parse left
+		  put ']'
+		elsif 
+		  left.children.first.to_s =~ /\A[a-zA-Z_$][a-zA-Z_$0-9]*\Z/
+		then
+		  put left.children.first
+		else
+		  parse left
+		end
+
+		put ': '; parse right
+              end
             end
 
           ensure

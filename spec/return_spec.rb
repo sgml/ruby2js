@@ -5,7 +5,7 @@ require 'ruby2js/filter/return'
 describe Ruby2JS::Filter::Return do
   
   def to_js( string)
-    Ruby2JS.convert(string, filters: [Ruby2JS::Filter::Return]).to_s
+    _(Ruby2JS.convert(string, filters: [Ruby2JS::Filter::Return]).to_s)
   end
   
   describe :lambda do
@@ -73,15 +73,20 @@ describe Ruby2JS::Filter::Return do
   end
 
   describe 'flow control statements' do
-    it "should handld if statements" do
+    it "should handle if statements" do
       to_js( 'lambda {|x| if false; a; elsif false; b; else c; end}' ).
         must_equal 'function(x) {if (false) {return a} else if (false) {return b} else {return c}}'
+    end
+
+    it "should handle case statements" do
+      to_js( 'lambda {|x| case false; when true; a; when false; b; else c; end}' ).
+        must_equal 'function(x) {switch (false) {case true: return a; case false: return b; default: return c}}'
     end
   end
 
   describe Ruby2JS::Filter::DEFAULTS do
     it "should include Return" do
-      Ruby2JS::Filter::DEFAULTS.must_include Ruby2JS::Filter::Return
+      _(Ruby2JS::Filter::DEFAULTS).must_include Ruby2JS::Filter::Return
     end
   end
 end

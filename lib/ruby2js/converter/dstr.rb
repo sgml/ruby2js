@@ -10,6 +10,33 @@ module Ruby2JS
     #   (...))
 
     handle :dstr, :dsym do |*children|
+      if es2015
+        # gather length of string parts; if long enough, newlines will
+        # not be escaped (poor man's HEREDOC)
+        strings = children.select {|child| child.type==:str}.
+          map {|child| child.children.last}.join
+        heredoc = (strings.length > 40 and strings.scan("\n").length > 3)
+
+        put '`'
+        children.each do |child|
+          if child.type == :str
+            str = child.children.first.inspect[1..-2].gsub('${', '$\{')
+            if heredoc
+              put! str.gsub("\\n", "\n")
+            else
+              put str
+            end
+          else
+            put '${'
+            parse child
+            put '}'
+          end
+        end
+        put '`'
+
+        return
+      end
+
       children.each_with_index do |child, index|
         put ' + ' unless index == 0
 

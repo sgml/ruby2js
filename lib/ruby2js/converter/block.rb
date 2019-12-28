@@ -15,23 +15,32 @@ module Ruby2JS
         call.children[1] == :step and
         [:irange, :erange].include? call.children.first.children.first.type
       then
-        # convert combinations of range, step and block to a for loop
-        var = args.children.first
-        expression = call.children.first.children.first
-        comp = (expression.type == :irange ? '<=' : '<')
-        put "for (var "; parse var; put " = "; parse expression.children.first
-        put "; "; parse var; 
-        if call.children[2].type == :int and call.children[2].children[0] < 0
-          put " #{comp.sub('<', '>')} "; parse expression.children.last
-          put "; "; parse var; put " -= "
-          parse s(:int, -call.children[2].children[0])
-        else
-          put " #{comp} "; parse expression.children.last
-          put "; "; parse var; put " += "; parse call.children[2]
+        begin
+          vars = @vars.dup
+          next_token, @next_token = @next_token, :continue
+
+          # convert combinations of range, step and block to a for loop
+          var = args.children.first
+          expression = call.children.first.children.first
+          comp = (expression.type == :irange ? '<=' : '<')
+          put "for (#{es2015 ? 'let' : 'var'} "; 
+          parse var; put " = "; parse expression.children.first
+          put "; "; parse var; 
+          if call.children[2].type == :int and call.children[2].children[0] < 0
+            put " #{comp.sub('<', '>')} "; parse expression.children.last
+            put "; "; parse s(:op_asgn, var, :-, 
+              s(:int, -call.children[2].children[0])), :statement
+          else
+            put " #{comp} "; parse expression.children.last
+            put "; "; parse s(:op_asgn, var, :+, call.children[2]), :statement
+          end
+          puts ") {"
+          scope block
+          sput "}"
+        ensure
+          @next_token = next_token
+          @vars = vars if es2015
         end
-        puts ") {"
-        scope block
-        sput "}"
 
       elsif
         call.children[0] == nil and call.children[1] == :function and
@@ -52,7 +61,7 @@ module Ruby2JS
         # consisting of an anonymous function
         block ||= s(:begin)
         function = @ast.updated(:def, [nil, args, block])
-        parse s(:send, *call.children, function)
+        parse s(@ast.children[0].type, *call.children, function), @state
       end
     end
   end

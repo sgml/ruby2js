@@ -5,7 +5,8 @@ require 'ruby2js/filter/react'
 describe Ruby2JS::Filter::React do
   
   def to_js(string)
-    Ruby2JS.convert(string, filters: [Ruby2JS::Filter::React], scope: self).to_s
+    _(Ruby2JS.convert(string, filters: [Ruby2JS::Filter::React],
+      scope: self).to_s)
   end
   
   describe :createClass do
@@ -197,12 +198,7 @@ describe Ruby2JS::Filter::React do
       result.must_include 'push(React.createElement("p", null, "b"))};'
     end
 
-    it "should insert a span if no elements are present" do
-      result = to_js( 'class Foo<React; def render; end; end' )
-      result.must_include 'return React.createElement("span")'
-    end
-
-    it "should insert a span if method is empty" do
+    it "should insert a span if render method is empty" do
       result = to_js( 'class Foo<React; def render; end; end' )
       result.must_include 'return React.createElement("span")'
     end
@@ -276,17 +272,17 @@ describe Ruby2JS::Filter::React do
   describe "~refs" do
     it "should handle ~ symbols properties" do
       to_js( 'class Foo<React; def method; ~x.textContent; end; end' ).
-        must_include '("getDOMNode" in this.refs.x ? this.refs.x.getDOMNode() : this.refs.x).textContent'
+        must_include 'this.refs.x.textContent'
     end
 
     it "should handle ~ lvar properties" do
       to_js( 'class Foo<React; def method; text = ~x.textContent; end; end' ).
-        must_include 'text = ("getDOMNode" in this.refs.x ? this.refs.x.getDOMNode() : this.refs.x).textContent'
+        must_include 'text = this.refs.x.textContent'
     end
 
     it "should handle ~ methods" do
       to_js( 'class Foo<React; def method; ~x.remove(); end; end' ).
-        must_include '("getDOMNode" in this.refs.x ? this.refs.x.getDOMNode() : this.refs.x).remove()'
+        must_include 'this.refs.x.remove()'
     end
 
     it "should convert ~(expression) to querySelector calls" do
@@ -328,7 +324,7 @@ describe Ruby2JS::Filter::React do
   describe "map gvars/ivars/cvars to refs/state/prop" do
     it "should map global variables to refs" do
       to_js( 'class Foo<React; def method; $x; end; end' ).
-        must_include '"getDOMNode" in this.refs.x ? this.refs.x.getDOMNode() : this.refs.x'
+        must_include 'this.refs.x'
     end
 
     it "should map instance variables to state" do
@@ -405,9 +401,9 @@ describe Ruby2JS::Filter::React do
     end
 
     it "should not support assigning to class variables" do
-      proc { 
+      _(proc { 
         to_js( 'class Foo<React; def method; @@x=1; end; end' )
-      }.must_raise NotImplementedError
+      }).must_raise NotImplementedError
     end
   end
 
@@ -424,7 +420,7 @@ describe Ruby2JS::Filter::React do
 
     it "should handle gvars" do
       to_js( 'class Foo<React; def method; $x.(); end; end' ).
-        must_include '("getDOMNode" in this.refs.x ? this.refs.x.getDOMNode() : this.refs.x)()'
+        must_include 'this.refs.x()'
     end
   end
 
@@ -498,7 +494,7 @@ describe Ruby2JS::Filter::React do
 
   describe Ruby2JS::Filter::DEFAULTS do
     it "should include React" do
-      Ruby2JS::Filter::DEFAULTS.must_include Ruby2JS::Filter::React
+      _(Ruby2JS::Filter::DEFAULTS).must_include Ruby2JS::Filter::React
     end
   end
 end

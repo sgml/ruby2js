@@ -143,6 +143,11 @@ module Ruby2JS
       end
     end
 
+    # add a single token to the current line without checking for newline
+    def put!(string)
+      @line << Token.new(string.gsub("\r", "\n"), @ast)
+    end
+
     # add a single token to the current line and then advance to next line
     def puts(string)
       unless String === string and string.include? "\n"
@@ -198,8 +203,8 @@ module Ruby2JS
     end
 
     # wrap long statements in curly braces
-    def wrap
-      puts '{'
+    def wrap(open = '{', close = '}')
+      puts open
       mark = output_location
       yield
 
@@ -207,7 +212,7 @@ module Ruby2JS
         @lines.length > mark.first+1 or
         @lines[mark.first-1].join.length + @line.join.length >= @width
       then
-        sput '}'
+        sput close
       else
         @line = @lines[mark.first-1]
         @line[-1..-1] = @lines.pop
@@ -229,6 +234,7 @@ module Ruby2JS
       slice = @lines[mark.first..-1]
       reindent(slice)
       slice.each_with_index do |line, index|
+        line << "" if line.empty?
         if line.first.start_with? '//'
           len += @width # comments are a deal breaker
         else
@@ -323,7 +329,7 @@ module Ruby2JS
       @lines.each_with_index do |line, row|
         col = line.indent
         line.each do |token|
-          if token != ' ' and token.loc
+          if token.respond_to? :loc and token.loc
             pos = token.loc.expression.begin_pos
 
             buffer = token.loc.expression.source_buffer

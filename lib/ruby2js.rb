@@ -1,8 +1,37 @@
-require 'parser/current'
+begin
+  # silence warnings, see 
+  # https://github.com/whitequark/parser/issues/346#issuecomment-317617695
+  # https://github.com/bbatsov/rubocop/issues/1819#issuecomment-95280926
+  old_verbose, $VERBOSE = $VERBOSE, nil
+  require 'parser/current'
+ensure
+  $VERBOSE = old_verbose
+end
+
 require 'ruby2js/converter'
+require 'ruby2js/filter'
 
 module Ruby2JS
   class SyntaxError < RuntimeError
+  end
+
+  @@eslevel_default = 2009 # ecmascript 5
+  @@strict_default = false
+
+  def self.eslevel_default
+    @@eslevel_default
+  end
+
+  def self.eslevel_default=(level)
+    @@eslevel_default = level
+  end
+
+  def self.strict_default
+    @@strict_default
+  end
+
+  def self.strict_default=(level)
+    @@strict_default = level
   end
 
   module Filter
@@ -20,15 +49,49 @@ module Ruby2JS
     end
 
     class Processor < Parser::AST::Processor
+      include Ruby2JS::Filter
       BINARY_OPERATORS = Converter::OPERATORS[2..-1].flatten
 
       def initialize(comments)
         @comments = comments
         @ast = nil
+        @exclude_methods = []
       end
 
       def options=(options)
         @options = options
+
+        @included = @@included
+        @excluded = @@excluded
+
+        include_all if options[:include_all]
+        include_only(options[:include_only]) if options[:include_only]
+        include(options[:include]) if options[:include]
+        exclude(options[:exclude]) if options[:exclude]
+      end
+
+      def es2015
+        @options[:eslevel] >= 2015
+      end
+
+      def es2016
+        @options[:eslevel] >= 2016
+      end
+
+      def es2017
+        @options[:eslevel] >= 2017
+      end
+
+      def es2018
+        @options[:eslevel] >= 2018
+      end
+
+      def es2019
+        @options[:eslevel] >= 2019
+      end
+
+      def es2020
+        @options[:eslevel] >= 2020
       end
 
       def process(node)
@@ -44,17 +107,26 @@ module Ruby2JS
         @ast = ast
       end
 
-      # handle all of the 'invented' ast types
+      # handle all of the 'invented/synthetic' ast types
+      def on_async(node); on_def(node); end
+      def on_asyncs(node); on_defs(node); end
       def on_attr(node); on_send(node); end
       def on_autoreturn(node); on_return(node); end
+      def on_await(node); on_send(node); end
       def on_call(node); on_send(node); end
+      def on_class_extend(node); on_send(node); end
+      def on_class_module(node); on_send(node); end
       def on_constructor(node); on_def(node); end
+      def on_defm(node); on_defs(node); end
       def on_defp(node); on_defs(node); end
+      def on_for_of(node); on_for(node); end
+      def on_in?(node); on_send(node); end
       def on_method(node); on_send(node); end
       def on_prop(node); on_array(node); end
       def on_prototype(node); on_begin(node); end
       def on_sendw(node); on_send(node); end
       def on_undefined?(node); on_defined?(node); end
+      def on_nil(node); end
 
       # provide a method so filters can call 'super'
       def on_sym(node); node; end
@@ -79,6 +151,9 @@ module Ruby2JS
   end
 
   def self.convert(source, options={})
+    options[:eslevel] ||= @@eslevel_default
+    options[:strict] = @@strict_default if options[:strict] == nil
+
     if Proc === source
       file,line = source.source_location
       source = File.read(file.dup.untaint).untaint
@@ -94,14 +169,19 @@ module Ruby2JS
       comments = Parser::Source::Comment.associate(ast, comments) if ast
     end
 
-    filters = options[:filters] || Filter::DEFAULTS
+    filters = (options[:filters] || Filter::DEFAULTS)
 
     unless filters.empty?
+      filters.dup.each do |filter|
+        filters = filter.reorder(filters) if filter.respond_to? :reorder
+      end
+
       filter = Filter::Processor
       filters.reverse.each do |mod|
         filter = Class.new(filter) {include mod} 
       end
       filter = filter.new(comments)
+
       filter.options = options
       ast = filter.process(ast)
     end
@@ -110,6 +190,8 @@ module Ruby2JS
 
     ruby2js.binding = options[:binding]
     ruby2js.ivars = options[:ivars]
+    ruby2js.eslevel = options[:eslevel]
+    ruby2js.strict = options[:strict]
     if ruby2js.binding and not ruby2js.ivars
       ruby2js.ivars = ruby2js.binding.eval \
         'Hash[instance_variables.map {|var| [var, instance_variable_get(var)]}]'
@@ -130,8 +212,14 @@ module Ruby2JS
     ruby2js
   end
   
-  def self.parse(source, file=nil)
-    Parser::CurrentRuby.parse_with_comments(source.encode('utf-8'), file)
+  def self.parse(source, file=nil, line=1)
+    buffer = Parser::Source::Buffer.new(file, line)
+    buffer.source = source.encode('utf-8')
+    parser = Parser::CurrentRuby.new
+    parser.builder.emit_file_line_as_literals=false
+    ast, comments = parser.parse_with_comments(buffer)
+    Parser::CurrentRuby.parse(source.encode('utf-8')) unless ast
+    [ast, comments]
   rescue Parser::SyntaxError => e
     split = source[0..e.diagnostic.location.begin_pos].split("\n")
     line, col = split.length, split.last.length

@@ -21,13 +21,26 @@ module Ruby2JS
           end
 
           unless undecls.empty?
-            return parse s(:begin, 
-              *undecls.map {|uname| s(:lvasgn, uname)}, @ast), @state
+            if es2015
+              put 'let '
+            else
+              put 'var ' 
+            end
+            put undecls.map(&:to_s).join(', ') + @sep
+            undecls.each {|var| @vars[var] = true}
           end
         end
 
-        if state == :statement and @scope and not @vars.include?(name) 
-          var = 'var ' 
+        hoist = false
+        if state == :statement and not @vars.include?(name) 
+          hoist = hoist?(@scope, @inner, name) if @inner and @scope != @inner
+          if not hoist
+            if es2015
+              var = 'let '
+            else
+              var = 'var '
+            end
+          end
         end
 
         if value
@@ -35,14 +48,58 @@ module Ruby2JS
         else
           put "#{ var }#{ name }"
         end
-      ensure
-        if @scope
-          @vars[name] = true
+
+        if not hoist
+          @vars[name] ||= true
         elsif state == :statement
           @vars[name] ||= :pending
         else
           @vars[name] ||= :implicit # console, document, ...
         end
+      end
+    end
+
+    # is 'name' referenced outside of inner scope?
+    def hoist?(outer, inner, name)
+      outer.children.each do |var|
+        next if var == inner
+        return true if var == name and [:lvar, :gvar].include? outer.type
+        return true if Parser::AST::Node === var and hoist?(var, inner, name)
+      end
+      return false
+    end
+
+    def multi_assign_declarations
+      undecls = []
+      child = @ast
+      loop do
+        if [:send, :casgn].include? child.type
+          subchild = child.children[2]
+        else
+          subchild = child.children[1]
+        end
+
+        if subchild.type == :send
+          break unless subchild.children[1] =~ /=$/
+        else
+          break unless [:send, :cvasgn, :ivasgn, :gvasgn, :lvasgn].
+            include? subchild.type
+        end
+
+        child = subchild
+
+        if child.type == :lvasgn and not @vars.include?(child.children[0]) 
+          undecls << child.children[0]
+        end
+      end
+
+      unless undecls.empty?
+        if es2015
+          put "let "
+        else
+          put "var "
+        end
+        put "#{undecls.map(&:to_s).join(', ')}#@sep"
       end
     end
   end

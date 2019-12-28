@@ -4,14 +4,17 @@ require 'ruby2js'
 
 describe 'not implemented' do
   # see https://github.com/whitequark/parser/blob/master/doc/AST_FORMAT.md
-  
+
   def todo(string)
-    proc { Ruby2JS.convert(string, filters: []) }.must_raise NotImplementedError
+    _(proc { Ruby2JS.convert(string, filters: []) }).
+      must_raise NotImplementedError
   end
 
   it "range inclusive" do
     # NOTE: for loops and filter/functions will handle the special case of array indexes
     # NOTE: filter/rubyjs implements this
+    # NOTE: .to_a is implemented in send
+
     todo( '1..2' )
   end
 
@@ -21,20 +24,19 @@ describe 'not implemented' do
     todo( '1...2' )
   end
 
-  it "Top-level constant" do
-    todo( '::Foo' )
+  it "decomposition" do
+    # NOTE: option {eslevel: es2015} implements this
+    todo( 'def f(a, (foo, *bar)); end' )
   end
 
-  it "decomposition" do
-    todo( 'def f(a, (foo, *bar)); end' )
+  it "class visibility modifiers" do
+    todo( 'class C; public; end' )
+    todo( 'class C; private; end' )
+    todo( 'class C; protected; end' )
   end
 
   it "yield" do
     todo( 'yield' )
-  end
-
-  it "catching exceptions without a variable" do
-    todo("begin; rescue Exception; end")
   end
 
   it "catching exceptions with different variables" do
@@ -62,21 +64,11 @@ describe 'not implemented' do
     todo("if /a/; end")
   end
 
-  it "methods definitions with invalid names" do
-    todo("def bang?; end")
-    todo("def bang!; end")
-  end
-
   it "regular expression back-references" do
     todo("$&")
     todo("$`")
     todo("$'")
     todo("$+")
-  end
-
-  it "<=>" do
-    # NOTE: filter/rubyjs implements this
-    todo("a<=>b")
   end
 
   unless RUBY_VERSION =~ /^1/
@@ -88,6 +80,7 @@ describe 'not implemented' do
       todo( '{ foo: 2, **bar }' )
     end
 
+    # NOTE: option {eslevel: es2015} implements this
     it "keyword argument" do
       todo( 'def f(a:nil); end' )
     end

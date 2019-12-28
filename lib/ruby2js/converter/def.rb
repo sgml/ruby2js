@@ -6,17 +6,14 @@ module Ruby2JS
     #     (arg :x)
     #   (...)
 
-    handle :def do |name, args, body=nil|
+    handle :def, :defm, :async do |name, args, body=nil|
       body ||= s(:begin)
-      if name =~ /[!?]$/
-        raise NotImplementedError, "invalid method name #{ name }"
-      end
 
       vars = {}
       vars.merge! @vars unless name
       if args and !args.children.empty?
         # splats
-        if args.children.last.type == :restarg
+        if args.children.last.type == :restarg and not es2015
           if args.children[-1].children.first
             body = s(:begin, body) unless body.type == :begin
             assign = s(:lvasgn, args.children[-1].children.first,
@@ -68,7 +65,7 @@ module Ruby2JS
 
         # optional arguments
         args.children.each_with_index do |arg, i|
-          if arg.type == :optarg
+          if arg.type == :optarg and not es2015
             body = s(:begin, body) unless body.type == :begin
             argname, value = arg.children
             children = args.children.dup
@@ -88,13 +85,60 @@ module Ruby2JS
         end
       end
 
+      put 'async ' if @ast.type == :async
+
+      # es2015 fat arrow support
+      if 
+        not name and es2015 and @state != :method and @ast.type != :defm and 
+        not @prop
+      then
+        expr = body
+        expr = expr.children.first while expr.type == :autoreturn
+        while expr.type == :begin and expr.children.length == 1
+          expr = expr.children.first
+        end
+        expr = expr.children.first if expr.type == :return
+
+        if EXPRESSIONS.include? expr.type
+          if expr.type == :send and expr.children[0..1] == [nil, :raise]
+            style = :statement
+          else
+            style = :expression
+          end
+        elsif 
+          expr.type == :if and expr.children[1] and expr.children[2] and
+          EXPRESSIONS.include? expr.children[1].type and
+          EXPRESSIONS.include? expr.children[2].type
+        then
+          style = :expression
+        else
+          style = :statement
+        end
+
+        if args.children.length == 1 and style == :expression
+          parse args; put ' => '
+        else
+          put '('; parse args; put ') => '
+        end
+
+        if style == :expression
+          expr.type == :hash ? group(expr) : wrap('(', ')') { parse(expr) }
+        elsif body.type == :begin and body.children.length == 0
+          put "{}"
+        else
+          put "{#{@nl}"; scope body, vars; put "#{@nl}}"
+        end
+
+        return
+      end
+
       nl = @nl unless body == s(:begin)
       begin
-        if name
-          put "function #{name}"
-        elsif @prop
+        if @prop
           put @prop
           @prop = nil
+        elsif name
+          put "function #{name.to_s.sub(/[?!]$/, '')}"
         else
           put 'function'
         end
@@ -106,7 +150,7 @@ module Ruby2JS
         mark = output_location
         scope body, vars
         if @block_this and @block_depth == 1
-          insert mark, "var self = this#{@sep}"
+          insert mark, "#{es2015 ? 'let' : 'var'} self = this#{@sep}"
           @block_this = false
         end
 
@@ -115,6 +159,17 @@ module Ruby2JS
         @next_token = next_token
         @block_depth -= 1 if @block_depth
       end
+    end
+
+    handle :optarg do |name, value|
+      put name
+      put '='
+      parse value 
+    end
+
+    handle :restarg do |name|
+      put '...'
+      put name
     end
   end
 end

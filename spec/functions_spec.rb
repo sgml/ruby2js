@@ -3,11 +3,11 @@ require 'minitest/autorun'
 require 'ruby2js/filter/functions'
 
 describe Ruby2JS::Filter::Functions do
-  
-  def to_js( string)
-    Ruby2JS.convert(string, filters: [Ruby2JS::Filter::Functions]).to_s
+
+  def to_js(string)
+    _(Ruby2JS.convert(string, filters: [Ruby2JS::Filter::Functions]).to_s)
   end
-  
+
   describe 'conversions' do
     it "should handle to_s" do
       to_js( 'a.to_s' ).must_equal 'a.toString()'
@@ -34,6 +34,38 @@ describe Ruby2JS::Filter::Functions do
     end
   end
 
+  describe :irange do
+    it "(0..5).to_a" do
+      to_js( '(0..5).to_a' ).must_equal('Array.apply(null, {length: 6}).map(Function.call, Number)')
+    end
+
+    it "(0..a).to_a" do
+      to_js( '(0..a).to_a' ).must_equal('Array.apply(null, {length: a+1}).map(Function.call, Number)')
+    end
+
+    it "(b..a).to_a" do
+      to_js( '(b..a).to_a' ).must_equal('Array.apply(null, {length: (a-b+1)}).map(Function.call, Number).map(function (idx) { return idx+b })')
+    end
+  end
+
+  describe :erange do
+    it "(0...5).to_a" do
+      to_js( '(0...5).to_a' ).must_equal('Array.apply(null, {length: 5}).map(Function.call, Number)')
+    end
+
+    it "(0...a).to_a" do
+      to_js( '(0...a).to_a' ).must_equal('Array.apply(null, {length: a}).map(Function.call, Number)')
+    end
+
+    it "(b...a).to_a" do
+      to_js( '(b...a).to_a' ).must_equal('Array.apply(null, {length: (a-b)}).map(Function.call, Number).map(function (idx) { return idx+b })')
+    end
+
+    it "test range which contains reserved variable idx" do
+      to_js( '(idx...i).to_a' ).must_equal('Array.apply(null, {length: (i-idx)}).map(Function.call, Number).map(function (i$) { return i$+idx })')
+    end
+  end
+
   describe 'string functions' do
     it 'should handle sub' do
       to_js( 'str.sub("a", "b")' ).must_equal 'str.replace("a", "b")'
@@ -51,12 +83,16 @@ describe Ruby2JS::Filter::Functions do
         must_equal 'var $str = $str.replace("a", "b")'
       to_js( 'str.sub!(/a/) {"x"}' ).
         must_equal 'var str = str.replace(/a/, function() {return "x"})'
+      to_js( "str.sub(/a(.)/, 'b\\1')" ).
+        must_equal 'str.replace(/a(.)/, "b$1")'
     end
 
     it 'should handle gsub and gsub!' do
       to_js( 'str.gsub("a", "b")' ).must_equal 'str.replace(/a/g, "b")'
       to_js( 'str.gsub(/a/i, "b")' ).must_equal 'str.replace(/a/gi, "b")'
       to_js( 'str.gsub(/a/, "b")' ).must_equal 'str.replace(/a/g, "b")'
+      to_js( 'str.gsub(/#{a}/, "b")' ).
+        must_equal 'str.replace(new RegExp(a, "g"), "b")'
       to_js( 'str.gsub(/a/) {"x"}' ).
         must_equal 'str.replace(/a/g, function() {return "x"})'
       to_js( 'str.gsub!("a", "b")' ).
@@ -65,6 +101,23 @@ describe Ruby2JS::Filter::Functions do
         must_equal 'item.str = item.str.replace(/a/g, "b")'
       to_js( 'str.gsub!(/a/, "b")' ).
         must_equal 'var str = str.replace(/a/g, "b")'
+      to_js( "str.gsub(/a(.)/, 'b\\1')" ).
+        must_equal 'str.replace(/a(.)/g, "b$1")'
+    end
+
+    it 'should handle scan' do
+      to_js( 'str.scan(/\d/)' ).must_equal 'str.match(/\d/g)'
+      to_js( 'str.scan(/(\d)(\d)/)' ).
+        must_equal 'str.match(/(\d)(\d)/g).map(function(s) {' +
+          'return s.match(/(\d)(\d)/).slice(1)})'
+      to_js( 'str.scan(pattern)' ).
+        must_equal 'str.match(new RegExp(pattern, "g")).map(function(s) {' +
+          'return s.match(pattern).slice(1)})'
+    end
+
+    it 'should handle sort!' do
+      to_js( 'str.sort! {|a, b| a - b}' ).
+        must_equal 'str.sort(function(a, b) {return a - b})'
     end
 
     it 'should handle ord and chr' do
@@ -92,17 +145,20 @@ describe Ruby2JS::Filter::Functions do
       to_js( 'x.end_with?("z")' ).must_equal 'x.slice(-1) == "z"'
     end
 
-    it 'should handle strip' do
+    it 'should handle strip/lstrip/rstrip' do
       to_js( 'x.strip()' ).must_equal 'x.trim()'
+      to_js( 'x.strip' ).must_equal 'x.trim()'
+      to_js( 'a.lstrip()' ).must_equal 'a.replace(/^\s+/, "")'
+      to_js( 'a.rstrip()' ).must_equal 'a.replace(/\s+$/, "")'
     end
 
     it 'should handle string multiply' do
       to_js( '" " * indent' ).must_equal 'new Array(indent + 1).join(" ")'
     end
   end
-    
+
   describe 'array functions' do
-    it "should map each to forEach" do
+    it "should map each to for statement" do
       to_js( 'a = 0; [1,2,3].each {|i| a += i}').
         must_equal 'var a = 0; [1, 2, 3].forEach(function(i) {a += i})'
     end
@@ -128,18 +184,22 @@ describe Ruby2JS::Filter::Functions do
 
     it "should handle inclusive ranges" do
       to_js( 'a[2..4]' ).must_equal 'a.slice(2, 5)'
-      to_js( 'a[2..-1]' ).must_equal 'a.slice(2, a.length)'
-      to_js( 'a[-4..-2]' ).must_equal 'a.slice(a.length - 4, a.length - 1)'
+      to_js( 'a[2..-1]' ).must_equal 'a.slice(2)'
+      to_js( 'a[-2..-1]' ).must_equal 'a.slice(-2)'
+      to_js( 'a[-4..-2]' ).must_equal 'a.slice(-4, -1)'
+      to_js( 'a[-4..-3]' ).must_equal 'a.slice(-4, -2)'
+      to_js( 'a[i..j]' ).must_equal 'a.slice(i, j + 1)'
     end
 
     it "should handle exclusive ranges" do
       to_js( 'a[2...4]' ).must_equal 'a.slice(2, 4)'
-      to_js( 'a[-4...-2]' ).must_equal 'a.slice(a.length - 4, a.length - 2)'
+      to_js( 'a[-4...-2]' ).must_equal 'a.slice(a.length - 4, -2)'
+      to_js( 'a[i...j]' ).must_equal 'a.slice(i, j)'
     end
 
     it "should handle regular expression indexes" do
-      to_js( 'a[/\d+/]' ).must_equal 'a.match(/\d+/)[0]'
-      to_js( 'a[/(\d+)/, 1]' ).must_equal 'a.match(/(\d+)/)[1]'
+      to_js( 'a[/\d+/]' ).must_equal '(a.match(/\d+/) || [])[0]'
+      to_js( 'a[/(\d+)/, 1]' ).must_equal '(a.match(/(\d+)/) || [])[1]'
     end
 
     it "should handle empty?" do
@@ -159,8 +219,16 @@ describe Ruby2JS::Filter::Functions do
         must_equal 'a.length = 0; a.push.apply(a, b)'
     end
 
-    it "should handle include?" do
+    it "should handle simple include?" do
       to_js( 'a.include? b' ).must_equal 'a.indexOf(b) != -1'
+    end
+
+    it "should handle erange include?" do
+      to_js( '(0...1).include? a' ).must_equal 'a >= 0 && a < 1'
+    end
+
+    it "should handle irange include?" do
+      to_js( '(0..5).include? a' ).must_equal 'a >= 0 && a <= 5'
     end
 
     it "should handle respond_to?" do
@@ -229,13 +297,48 @@ describe Ruby2JS::Filter::Functions do
   end
 
   describe 'hash functions' do
+    it "should map each_pair to Object.keys().forEach, extracting values" do
+      to_js( 'h.each_pair {|key, i| a += i}').
+        must_equal 'for (var key in h) {var i = h[key]; a += i}'
+    end
+
+    it "should map each_value to Object.keys().forEach, extracting values" do
+      to_js( 'h.each_value {|i| a += i}').
+        must_equal 'h.forEach(function(i) {a += i})'
+    end
+
     it "should handle keys" do
       to_js( 'a.keys' ).must_equal 'a.keys'
       to_js( 'a.keys()' ).must_equal 'Object.keys(a)'
     end
 
+    it "should convert hash.each_key" do
+      to_js( 'h.each_key {|k| x+=k}' ).
+        must_equal 'for (var k in h) {x += k}'
+    end
+
+    it "should handle merge" do
+      to_js( 'a.merge(b)' ).
+        must_equal  "(function() {var $$ = {}; " +
+          "for (var $_ in a) {$$[$_] = a[$_]}; " +
+          "for (var $_ in b) {$$[$_] = b[$_]}; return $$})()"
+    end
+
+    it "should handle merge with a constant hash" do
+      to_js( 'a.merge(b: 1)' ).
+        must_equal  "(function() {var $$ = {}; " +
+          "for (var $_ in a) {$$[$_] = a[$_]}; " +
+          "$$.b = 1; return $$})()"
+    end
+
     it "should handle merge!" do
-      to_js( 'a.merge!(b)' ).must_equal 'Object.assign(a, b)'
+      to_js( 'a.merge!(b)' ).
+        must_equal "(function() {for (var $_ in b) {a[$_] = b[$_]}; return a})()"
+    end
+
+    it "should handle merge! with a constant hash" do
+      to_js( 'a.merge!(b: 1)' ).
+        must_equal "(function() {a.b = 1; return a})()"
     end
 
     it "should handle delete attribute (ruby style) - static" do
@@ -289,17 +392,24 @@ describe Ruby2JS::Filter::Functions do
   describe 'step' do
     it "should map upto to for" do
       to_js( '1.upto(3) {|i| p i}' ).
-        must_equal 'for (var i = 1; i <= 3; i += 1) {p(i)}'
+        must_equal 'for (var i = 1; i <= 3; i++) {p(i)}'
     end
 
     it "should map downto to for" do
       to_js( '3.downto(1) {|i| p i}' ).
-        must_equal 'for (var i = 3; i >= 1; i -= 1) {p(i)}'
+        must_equal 'for (var i = 3; i >= 1; i--) {p(i)}'
+    end
+
+    it "should range each to for" do
+      to_js( '(1..10).each {|i| p i}' ).
+        must_equal 'for (var i = 1; i <= 10; i++) {p(i)}'
+      to_js( '(1...10).each {|i| p i}' ).
+        must_equal 'for (var i = 1; i < 10; i++) {p(i)}'
     end
 
     it "should map step().each to for -- default" do
       to_js( '1.step(3).each {|i| p i}' ).
-        must_equal 'for (var i = 1; i <= 3; i += 1) {p(i)}'
+        must_equal 'for (var i = 1; i <= 3; i++) {p(i)}'
     end
 
     it "should map step().each to for -- forward" do
@@ -372,7 +482,7 @@ describe Ruby2JS::Filter::Functions do
 
   describe Ruby2JS::Filter::DEFAULTS do
     it "should include Functions" do
-      Ruby2JS::Filter::DEFAULTS.must_include Ruby2JS::Filter::Functions
+      _(Ruby2JS::Filter::DEFAULTS).must_include Ruby2JS::Filter::Functions
     end
   end
 end

@@ -3,24 +3,57 @@ Ruby2js
 
 Minimal yet extensible Ruby to JavaScript conversion.  
 
-[![Build Status](https://travis-ci.org/rubys/ruby2js.svg)](https://travis-ci.org/rubys/ruby2js) 
+[![Build Status](https://travis-ci.org/rubys/ruby2js.svg)](https://travis-ci.org/rubys/ruby2js)
 [![Gem Version](https://badge.fury.io/rb/ruby2js.svg)](https://badge.fury.io/rb/ruby2js)
 
 Description
 ---
 
-The base package maps Ruby syntax to JavaScript semantics.  For example,
-a Ruby Hash literal becomes a JavaScript Object literal.  Ruby symbols
-become JavaScript strings.  Ruby method calls become JavaScript function
-calls IF there are either one or more arguments passed OR parenthesis are
-used, otherwise Ruby method calls become JavaScript property accesses.
-By default, methods and procs return `undefined`.
+The base package maps Ruby syntax to JavaScript semantics.
+For example:
+
+  * a Ruby Hash literal becomes a JavaScript Object literal
+  * Ruby symbols become JavaScript strings.
+  * Ruby method calls become JavaScript function calls IF
+    there are either one or more arguments passed OR
+    parenthesis are used
+  * otherwise Ruby method calls become JavaScript property accesses.
+  * by default, methods and procs return `undefined`
+  * splats mapped to spread syntax when ES2015 or later is selected, and
+    to equivalents using `apply`, `concat`, `slice`, and `arguments` otherwise.
+  * ruby string interpolation is expanded into string + operations
+  * `and` and `or` become `&&` and `||`
+  * `a ** b` becomes `Math.pow(a,b)`
+  * `<< a` becomes `.push(a)`
+  * `unless` becomes `if !`
+  * `until` becomes `while !`
+  * `case` and `when` becomes `switch` and `case`
+  * ruby for loops become js for loops
+  * `(1...4).step(2){` becomes `for (var i = 1; i < 4; i += 2) {`
+  * `x.forEach { next }` becomes `x.forEach(function() {return})`
+  * `lambda {}` and `proc {}` becomes `function() {}`
+  * `class Person; end` becomes `function Person() {}`
+  * instance methods become prototype methods
+  * instance variables become underscored, `@name` becomes `this._name`
+  * self is assigned to this is if used
+  * Any block becomes and explicit argument `new Promise do; y(); end` becomes `new Promise(function() {y()})`
+  * regular expressions are mapped to js
+  * `raise` becomes `throw`
+  * expressions enclosed in backtick operators (\`\`) and `%x{}` literals are
+    evaluated in the context of the caller and the results are inserted
+    into the generated JavaScript.
 
 Ruby attribute accessors, methods defined with no parameters and no
 parenthesis, as well as setter method definitions, are
 mapped to
 [Object.defineProperty](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/defineProperty?redirectlocale=en-US&redirectslug=JavaScript%2FReference%2FGlobal_Objects%2FObject%2FdefineProperty),
-so avoid these if you wish to target users running IE8 or lower. 
+so avoid these if you wish to target users running IE8 or lower.
+
+While both Ruby and JavaScript have open classes, Ruby unifies the syntax for
+defining and extending an existing class, whereas JavaScript does not.  This
+means that Ruby2JS needs to be told when a class is being extended, which is
+done by prepending the `class` keyword with two plus signs, thus:
+`++class C; ...; end`.
 
 Filters may be provided to add Ruby-specific or framework specific
 behavior.  Filters are essentially macro facilities that operate on
@@ -45,6 +78,18 @@ With filter:
 ```ruby
 require 'ruby2js/filter/functions'
 puts Ruby2JS.convert('"2A".to_i(16)')
+```
+
+Enable ES2015 support:
+
+```ruby
+puts Ruby2JS.convert('"#{a}"', eslevel: 2015)
+```
+
+Enable strict support:
+
+```ruby
+puts Ruby2JS.convert('a=1', strict: true)
 ```
 
 With [ExecJS](https://github.com/sstephenson/execjs):
@@ -79,11 +124,11 @@ quite different if `a` is a Hash.
 
 One way to resolve this is to change the way indexing operators are evaluated,
 and to provide a runtime library that adds properties to global JavaScript
-objects to handle this.  This is the approach that [Opal](http://opalrb.org/)
+objects to handle this.  This is the approach that [Opal](http://opalrb.com/)
 takes.  It is a fine approach, with a number of benefits.  It also has some
 notable drawbacks.  For example,
-[readability](http://opalrb.org/try/#code:a%20%3D%20%22abc%22%3B%20puts%20a[-1])
-and 
+[readability](http://opalrb.com/try/#code:a%20%3D%20%22abc%22%3B%20puts%20a[-1])
+and
 [compatibility with other frameworks](https://github.com/opal/opal/issues/400).
 
 Another approach is to simply accept JavaScript semantics for what they are.
@@ -112,6 +157,20 @@ to `forEach`, `each!` will pass through the filter.  The final code that emits
 JavaScript function calls and parameter accesses will strip off these
 suffixes.
 
+This approach works well if it is an occasional change, but if the usage is
+pervasive, most filters support options to `exclude` a list of mappings,
+for example:
+
+```ruby
+puts Ruby2JS.convert('jQuery("li").each {|index| ...}', exclude: :each)
+```
+
+Alternatively, you can change the default:
+
+```ruby
+Ruby2JS::Filter.exclude :each
+```
+
 Static transformations and runtime libraries aren't aren’t mutually exclusive.
 With enough of each, one could reproduce any functionality desired.  Just be
 forewarned, that implementing a function like `method_missing` would require a
@@ -127,9 +186,10 @@ includes three such integrations:
 *  [CGI](https://github.com/rubys/ruby2js/blob/master/lib/ruby2js/cgi.rb)
 *  [Sinatra](https://github.com/rubys/ruby2js/blob/master/lib/ruby2js/sinatra.rb)
 *  [Rails](https://github.com/rubys/ruby2js/blob/master/lib/ruby2js/rails.rb)
+*  [Haml](https://github.com/rubys/ruby2js/blob/master/lib/ruby2js/haml.rb)
 
 As you might expect, CGI is a bit sluggish.  By contrast, Sinatra and Rails
-are quite speedy as the bulk of the time is spend on the initial load of the
+are quite speedy as the bulk of the time is spent on the initial load of the
 required libraries.
 
 Filters
@@ -138,9 +198,6 @@ Filters
 In general, making use of a filter is as simple as requiring it.  If multiple
 filters are selected, they will all be applied in parallel in one pass through
 the script.
-
-* <a id="strict" href="https://github.com/rubys/ruby2js/blob/master/lib/ruby2js/filter/strict.rb">strict</a>
-  adds `'use strict';` to the output.
 
 * <a id="return" href="https://github.com/rubys/ruby2js/blob/master/lib/ruby2js/filter/return.rb">return</a>
   adds `return` to the last expression in functions.
@@ -163,20 +220,25 @@ the script.
     * `.clear` becomes `.length = 0`
     * `.delete` becomes `delete target[arg]`
     * `.downcase` becomes `.toLowerCase`
-    * `.each` becomes `forEach`
+    * `.each` becomes `.forEach`
+    * `.each_key` becomes `for (i in ...) {}`
+    * `.each_pair` becomes `for (var key in item) {var value = item[key]; ...}`
+    * `.each_value` becomes `.forEach`
     * `.each_with_index` becomes `.forEach`
     * `.end_with?` becomes `.slice(-arg.length) == arg`
     * `.empty?` becomes `.length == 0`
     * `.find_index` becomes `findIndex`
     * `.first` becomes `[0]`
     * `.first(n)` becomes `.slice(0, n)`
-    * `.gsub` becomes `replace //g`
+    * `.gsub` becomes `replace(//g)`
     * `.include?` becomes `.indexOf() != -1`
     * `.inspect` becomes `JSON.stringify()`
-    * `.keys` becomes `Object.keys()`
+    * `.keys()` becomes `Object.keys()`
     * `.last` becomes `[*.length-1]`
     * `.last(n)` becomes `.slice(*.length-1, *.length)`
+    * `.lstrip` becomes `.replace(/^\s+/, "")`
     * `.max` becomes `Math.max.apply(Math)`
+    * `.merge` becomes `Object.assign({}, ...)`
     * `.merge!` becomes `Object.assign()`
     * `.min` becomes `Math.min.apply(Math)`
     * `.nil?` becomes `== null`
@@ -184,11 +246,16 @@ the script.
     * `puts` becomes `console.log`
     * `.replace` becomes `.length = 0; ...push.apply(*)`
     * `.respond_to?` becomes `right in left`
+    * `.rstrip` becomes `.replace(/s+$/, "")`
+    * `.scan` becomes `.match(//g)`
     * `.start_with?` becomes `.substring(0, arg.length) == arg`
     * `.upto(lim)` becomes `for (var i=num; i<=lim; i+=1)`
     * `.downto(lim)` becomes `for (var i=num; i>=lim; i-=1)`
     * `.step(lim, n).each` becomes `for (var i=num; i<=lim; i+=n)`
     * `.step(lim, -n).each` becomes `for (var i=num; i>=lim; i-=n)`
+    * `(0..a).to_a` becomes `Array.apply(null, {length: a}).map(Function.call, Number)`
+    * `(b..a).to_a` becomes `Array.apply(null, {length: (a-b+1)}).map(Function.call, Number).map(function (idx) { return idx+b })`
+    * `(b...a).to_a` becomes `Array.apply(null, {length: (a-b)}).map(Function.call, Number).map(function (idx) { return idx+b })`
     * `.strip` becomes `.trim`
     * `.sub` becomes `.replace`
     * `.to_f` becomes `parseFloat`
@@ -199,9 +266,10 @@ the script.
     * `[n...m]` becomes `.slice(n,m)`
     * `[n..m]` becomes `.slice(n,m+1)`
     * `[/r/, n]` becomes `.match(/r/)[n]`
+    * `(1..2).each {|i| ...}` becomes `for (var i=1 i<=2; i+=1)`
     * `"string" * length` becomes `new Array(length + 1).join("string")`
     * `.sub!` and `.gsub!` become equivalent `x = x.replace` statements
-    * `.map!`, `.reverse!`, and `.select` become equivalent 
+    * `.map!`, `.reverse!`, and `.select` become equivalent
       `.splice(0, .length, *.method())` statements
     * `@foo.call(args)` becomes `this._foo(args)`
     * `@@foo.call(args)` becomes `this.constructor._foo(args)`
@@ -215,6 +283,96 @@ the script.
     * New classes subclassed off of `Exception` will become subclassed off
       of `Error` instead; and default constructors will be provided
     * `loop do...end` will be replaced with `while (true) {...}`
+
+    Additionally, there is one mapping that will only be done if explicitly
+    <a href="https://github.com/rubys/ruby2js/blob/master/lib/ruby2js/filter.rb">included</a>:
+
+    * `.class` becomes `.constructor`
+
+* <a id="node" href="https://github.com/rubys/ruby2js/blob/master/spec/node_spec.rb">node</a>
+
+    * `` `command` `` becomes `child_process.execSync("command", {encoding: "utf8"})`
+    * `ARGV` becomes `process.argv.slice(2)`
+    * `__dir__` becomes `__dirname`
+    * `Dir.chdir` becomes `process.chdir`
+    * `Dir.entries` becomes `fs.readdirSync`
+    * `Dir.mkdir` becomes `fs.mkdirSync`
+    * `Dir.mktmpdir` becomes `fs.mkdtempSync`
+    * `Dir.pwd` becomes `process.cwd`
+    * `Dir.rmdir` becomes `fs.rmdirSync`
+    * `ENV` becomes `process.env`
+    * `__FILE__` becomes `__filename`
+    * `File.chmod` becomes `fs.chmodSync`
+    * `File.chown` becomes `fs.chownSync`
+    * `File.cp` becomes `fs.copyFileSync`
+    * `File.exist?` becomes `fs.existsSync`
+    * `File.lchmod` becomes `fs.lchmodSync`
+    * `File.link` becomes `fs.linkSync`
+    * `File.ln` becomes `fs.linkSync`
+    * `File.lstat` becomes `fs.lstatSync`
+    * `File.read` becomes `fs.readFileSync`
+    * `File.readlink` becomes `fs.readlinkSync`
+    * `File.realpath` becomes `fs.realpathSync`
+    * `File.rename` becomes `fs.renameSync`
+    * `File.stat` becomes `fs.statSync`
+    * `File.symlink` becomes `fs.symlinkSync`
+    * `File.truncate` becomes `fs.truncateSync`
+    * `File.unlink` becomes `fs.unlinkSync`
+    * `FileUtils.cd` becomes `process.chdir`
+    * `FileUtils.cp` becomes `fs.copyFileSync`
+    * `FileUtils.ln` becomes `fs.linkSync`
+    * `FileUtils.ln_s` becomes `fs.symlinkSync`
+    * `FileUtils.mkdir` becomes `fs.mkdirSync`
+    * `FileUtils.mv` becomes `fs.renameSync`
+    * `FileUtils.pwd` becomes `process.cwd`
+    * `FileUtils.rm` becomes `fs.unlinkSync`
+    * `IO.read` becomes `fs.readFileSync`
+    * `IO.write` becomes `fs.writeFileSync`
+    * `system` becomes `child_process.execSync(..., {stdio: "inherit"})`
+
+* <a id="nokogiri" href="https://github.com/rubys/ruby2js/blob/master/spec/nokogiri.rb">nokogiri</a>
+    * `add_child` becomes `appendChild`
+    * `add_next_sibling` becomes `node.parentNode.insertBefore(sibling, node.nextSibling)`
+    * `add_previous_sibling` becomes `node.parentNode.insertBefore(sibling, node)`
+    * `after` becomes `node.parentNode.insertBefore(sibling, node.nextSibling)`
+    * `at` becomes `querySelector`
+    * `attr` becomes `getAttribute`
+    * `attribute` becomes `getAttributeNode`
+    * `before` becomes `node.parentNode.insertBefore(sibling, node)`
+    * `cdata?` becomes `node.nodeType === Node.CDATA_SECTION_NODE`
+    * `children` becomes `childNodes`
+    * `comment?` becomes `node.nodeType === Node.COMMENT_NODE`
+    * `content` becomes `textContent`
+    * `create_element` becomes `createElement`
+    * `document` becomes `ownerDocument`
+    * `element?` becomes `node.nodeType === Node.ELEMENT_NODE`
+    * `fragment?` becomes `node.nodeType === Node.FRAGMENT_NODE`
+    * `get_attribute` becomes `getAttribute`
+    * `has_attribute` becomes `hasAttribute`
+    * `inner_html` becomes `innerHTML`
+    * `key?` becomes `hasAttribute`
+    * `name` becomes `nextSibling`
+    * `next` becomes `nodeName`
+    * `next=` becomes `node.parentNode.insertBefore(sibling,node.nextSibling)`
+    * `next_element` becomes `nextElement`
+    * `next_sibling` becomes `nextSibling`
+    * `Nokogiri::HTML5` becomes `new JSDOM().window.document`
+    * `Nokogiri::HTML5.parse` becomes `new JSDOM().window.document`
+    * `Nokogiri::HTML` becomes `new JSDOM().window.document`
+    * `Nokogiri::HTML.parse` becomes `new JSDOM().window.document`
+    * `Nokogiri::XML::Node.new` becomes `document.createElement()`
+    * `parent` becomes `parentNode`
+    * `previous=` becomes `node.parentNode.insertBefore(sibling, node)`
+    * `previous_element` becomes `previousElement`
+    * `previous_sibling` becomes `previousSibling`
+    * `processing_instruction?` becomes `node.nodeType === Node.PROCESSING_INSTRUCTION_NODE`
+    * `remove_attribute` becomes `removeAttribute`
+    * `root` becomes `documentElement`
+    * `search` becomes `querySelectorAll`
+    * `set_attribute` becomes `setAttribute`
+    * `text?` becomes `node.nodeType === Node.TEXT_NODE`
+    * `text` becomes `textContent`
+    * `to_html` becomes `outerHTML`
 
 * <a id="rubyjs" href="https://github.com/rubys/ruby2js/blob/master/spec/rubyjs_spec.rb">rubyjs</a>
     * `.at()` becomes `_a.at()`
@@ -309,7 +467,7 @@ the script.
     * `.zip()` becomes `_.zip()`
     * `(n...m)` becomes `_.range(n, m)`
     * `(n..m)` becomes `_.range(n, m+1)`
-    * `.compact!`, `.flatten!`, `shuffle!`, `reject!`, `sort_by!`, and 
+    * `.compact!`, `.flatten!`, `shuffle!`, `reject!`, `sort_by!`, and
       `.uniq` become equivalent `.splice(0, .length, *.method())` statements
     * for the following methods, if the block consists entirely of a simple
       expression (or ends with one), a `return` is added prior to the
@@ -330,39 +488,6 @@ the script.
     * maps `$$` to jQuery `$` function
     * defaults the fourth parameter of $$.post to `"json"`, allowing Ruby block
       syntax to be used for the success function.
-
-* <a id="angularrb" href="https://github.com/rubys/ruby2js/blob/master/spec/angularrb.rb">angularrb</a>
-
-    * maps Ruby `module` to `angular.module`
-    * maps `filter`, `controller`, `factory`, and `directive` to calls to
-      angular module functions.
-    * maps `use` statements to formal arguments or array values (as
-      appropriate) depending on the module function.
-    * maps `watch` statements to calls to `$scope.$watch`.
-    * tracks globals variable and constant references and adds additional
-      implicit `use` statements
-    * maps constant assignments in an angular module to a filter
-    * maps class definitions in an angular module to a filter
-    * within a controller or within a `link` method in a directive:
-        * maps `apply`, `broadcast`, `digest`, `emit`, `eval`, `evalAsync`, and 
-          `parent` calls to `$scope` functions.
-        * maps `apply!`, `broadcast!`, `digest!`, `eval!`, and `evalAsync!`
-          calls to `$rootScope` functions.
-        * maps `filter` calls to '$filter` calls.
-        * maps `timeout` and `interval` calls with a block to `$timeout` and
-          `$interval` calls where the block is passed as the first parameter.
-
-* <a id="angular-route" href="https://github.com/rubys/ruby2js/blob/master/lib/ruby2js/filter/angular-routerb.rb">angular-route</a>
-
-    * maps `case` statements on `$routeProvider` to angular.js module
-      configuration.
-    * adds implicit module `use` of `ngRoute` when such a `case` statement
-      is encountered
-
-* <a id="angular-resource" href="https://github.com/rubys/ruby2js/blob/master/lib/ruby2js/filter/angular-resource.rb">angular-resource</a>
-    * maps `$resource.new` statements on `$resource` function calls.
-    * adds implicit module `use` of `ngResource` when `$resource.new` calls
-      are encountered
 
 * <a id="minitest-jasmine" href="https://github.com/rubys/ruby2js/blob/master/spec/minitest-jasmine.rb">minitest-jasmine</a>
     * maps subclasses of `Minitest::Test` to `describe` calls
@@ -385,6 +510,24 @@ the script.
     * maps `assert_operator`, `refute_operator`, `.must_be`, and `.cant_be`
        calls to `expect`...`toBeGreaterThan()` or `toBeLessThan` calls
 
+* <a id="cjs" href="https://github.com/rubys/ruby2js/blob/master/spec/cjs">cjs</a>
+    * maps `export def f` to `exports.f =`
+    * maps `export async def f` to `exports.f = async`
+    * maps `export v =` to `exports.v =`
+    * maps `export default proc` to `module.exports =`
+    * maps `export default async proc` to `module.exports = async`
+    * maps `export default` to `module.exports =`
+
+* <a id="matchAll" href="https://github.com/rubys/ruby2js/blob/master/spec/matchAll">matchAll</a>
+
+    For ES level < 2020:
+
+    * maps `str.matchAll(pattern).forEach {}` to 
+      `while (match = pattern.exec(str)) {}`
+
+    Note `pattern` must be a simple variable with a value of a regular
+    expression with the `g` flag set at runtime.
+
 [Wunderbar](https://github.com/rubys/wunderbar) includes additional demos:
 
 * [chat](https://github.com/rubys/wunderbar/blob/master/demo/chat.rb),
@@ -392,31 +535,115 @@ the script.
   and [wiki](https://github.com/rubys/wunderbar/blob/master/demo/wiki.rb) make
   use of the jquery filter.
 
-* [angularjs](https://github.com/rubys/wunderbar/blob/master/demo/angularjs.rb)
-  makes use of the angular filters to implement the 
-  [angular.js tutorial](http://docs.angularjs.org/tutorial).  This demo
-  includes:
-    * [view](https://github.com/rubys/wunderbar/blob/master/demo/views/index._html)
-    * [partials](https://github.com/rubys/wunderbar/tree/master/demo/partials)
-    * [js](https://github.com/rubys/wunderbar/tree/master/demo/js)
+ES2015 support
+---
+
+When option `eslevel: 2015` is provided, the following additional
+conversions are made:
+
+* `"#{a}"` becomes <code>\`${a}\`</code>
+* `a = 1` becomes `let a = 1`
+* `A = 1` becomes `const A = 1`
+* `a, b = b, a` becomes `[a, b] = [b, a]`
+* `a, (foo, *bar) = x` becomes `let [a, [foo, ...bar]] = x`
+* `def f(a, (foo, *bar))` becomes `function f(a, [foo, ...bar])`
+* `def a(b=1)` becomes `function a(b=1)`
+* `def a(*b)` becomes `function a(...b)`
+* `.each_value` becomes `for (i of ...) {}`
+* `a(*b)` becomes `a(...b)`
+* `"#{a}"` becomes <code>\`${a}\`</code>
+* `lambda {|x| x}` becomes `(x) => {return x}`
+* `proc {|x| x}` becomes `(x) => {x}`
+* `a {|x|}` becomes `a((x) => {})`
+* `class Person; end` becomes `class Person {}`
+* `(0...a).to_a` becomes `[...Array(a).keys()]`
+* `(0..a).to_a` becomes `[...Array(a+1).keys()]`
+* `(b..a).to_a` becomes `Array.from({length: (a-b+1)}, (_, idx) => idx+b)`
+
+ES2015 class support includes constructors, super, methods, class methods,
+instance methods, instance variables, class variables, getters, setters,
+attr_accessor, attr_reader, attr_writer, etc.
+
+Additionally, the `functions` filter will provide the following conversion:
+
+* `Array(x)` becomes `Array.from(x)`
+* `.inject(n) {}` becomes `.reduce(() => {}, n)`
+
+Finally, keyword arguments and optional keyword arguments will be mapped to
+parameter detructuring.
+
+ES2016 support
+---
+
+When option `eslevel: 2016` is provided, the following additional
+conversion is made:
+
+* `a ** b` becomes `a ** b`
+* `.include?` becomes `.includes`
+
+ES2017 support
+---
+
+When option `eslevel: 2017` is provided, the following additional
+conversions are made by the `functions` filter:
+
+* `.values()` becomes `Object.values()`
+* `.entries()` becomes `Object.entries()`
+* `.each_pair {}` becomes `for (let [key, value] of Object.entries()) {}'
+
+ES2018 support
+---
+
+When option `eslevel: 2018` is provided, the following additional
+conversion is made by the `functions` filter:
+
+* `.merge` becomes `{...a, ...b}`
+
+Additionally, rest arguments can now be used with keyword arguments and
+optional keyword arguments.
+
+ES2019 support
+---
+
+When option `eslevel: 2019` is provided, the following additional
+conversion is made by the `functions` filter:
+
+* `.flatten` becomes `.flat(Infinity)`
+* `.lstrip` becomes `.trimEnd
+* `.rstrip` becomes `.trimStart
+* `a.to_h` becomes `Object.fromEntries(a)`
+
+Additionally, `rescue` without a variable will map to `catch` without a
+variable.
+
+ES2020 support
+---
+
+When option `eslevel: 2020` is provided, the following additional
+conversions are made:
+
+* `@x` becomes `this.#x`
+* `@@x` becomes `ClassName.#x`
+* `a&.b` becomes `a?.b`
+* `.scan` becomes `Array.from(str.matchAll(/.../g), s => s.slice(1))`
 
 Picking a Ruby to JS mapping tool
 ---
 
 > dsl — A domain specific language, where code is written in one language and
-> errors are given in another. 
+> errors are given in another.
 > -- [Devil’s Dictionary of Programming](http://programmingisterrible.com/post/65781074112/devils-dictionary-of-programming)
 
 If you simply want to get a job done, and would like a mature and tested
 framework, and only use one of the many integrations that
-[Opal](http://opalrb.org/) provides, then Opal is the way to go right now.
+[Opal](http://opalrb.com/) provides, then Opal is the way to go right now.
 
 ruby2js is for those that want to produce JavaScript that looks like it
 wasn’t machine generated, and want the absolute bare minimum in terms of
 limitations as to what JavaScript can be produced.
 
-[Try](http://intertwingly.net/projects/ruby2js/all) for yourself.
-[Compare](http://opalrb.org/try/#code:).
+[Try](http://intertwingly.net/projects/ruby2js.cgi/all) for yourself.
+[Compare](http://opalrb.com/try/#code:).
 
 And, of course, the right solution might be to use
 [CoffeeScript](http://coffeescript.org/) instead.

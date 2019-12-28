@@ -771,14 +771,7 @@ module Ruby2JS
       # convert global variables to refs
       def on_gvar(node)
         return super unless @reactClass
-        ref = s(:attr, s(:attr, s(:self), :refs), 
-          node.children.first.to_s[1..-1])
-
-        # Handle both refs to custom (user-defined) components as well as
-        # refs to built-in DOM components.  See:
-        # https://facebook.github.io/react/blog/2015/10/07/react-v0.14.html#dom-node-refs
-        s(:if, s(:in?, s(:sym, :getDOMNode), ref), 
-          s(:send, ref, :getDOMNode), ref)
+        s(:attr, s(:attr, s(:self), :refs), node.children.first.to_s[1..-1])
       end
 
       # convert instance variables to state
@@ -830,7 +823,7 @@ module Ruby2JS
       # prevent attempts to assign to React properties
       def on_cvasgn(node)
         return super unless @reactMethod
-        raise NotImplementedError, "setting a React property"
+        raise Error.new("setting a React property", node)
       end
 
       # convert instance variables to state: "@x ||= y"
